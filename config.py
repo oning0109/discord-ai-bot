@@ -1,5 +1,6 @@
 import os
 
+print("DISCORD_TOKEN 설정 여부:", bool(os.getenv("DISCORD_TOKEN")))
 # Discord bot token is supplied through the DISCORD_TOKEN environment variable.
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
