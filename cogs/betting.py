@@ -10,8 +10,14 @@
    - 서버(봇) 환경변수에만 넣고, GitHub·웹사이트 코드에는 절대 넣지 마세요.
    - 키가 없으면 베팅 기능만 꺼진 채로 봇은 정상 동작합니다.
 """
+import asyncio
 import os
-from dotenv import load_dotenv
+import re
+from typing import Optional
+
+import discord
+import requests
+from discord.ext import commands, tasks
 
 load_dotenv()
 
