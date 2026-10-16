@@ -25,7 +25,7 @@ from balancer import calculate_expected_win_rate
 # ⚙️ 설정
 # ---------------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://tdatedpggtutuqrywguk.supabase.co")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkYXRlZHBnZ3R1dHVxcnl3Z3VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3NzY3NjUsImV4cCI6MjEwNzM1Mjc2NX0.QuXGuebYHDGc-2x7rZG-NZSw8Xz7Y-qU4D18HJQH2gg")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkYXRlZHBnZ3R1dHVxcnl3Z3VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3NzY3NjUsImV4cCI6MjEwNzM1Mjc2NX0.QuXGuebYHDGc-2x7rZG-NZSw8Xz7Y-qU4D18HJQH2gg")
 
 # 칩 금액 : LeaderBoard 경험치샵 상품에 연결한 "칩 역할"의 ID (0 = 미설정)
 CHIP_ROLE_IDS = {
@@ -43,7 +43,7 @@ MIN_WITHDRAW = 1000          # 최소 출금 신청 금액
 BET_ADMIN_CHANNEL_ID = 0     # 출금 신청 알림을 보낼 관리자 채널 ID (0 = 알림 없음)
 
 ROLE_AMOUNTS = {rid: amount for amount, rid in CHIP_ROLE_IDS.items() if rid}
-ENABLED = bool(SUPABASE_SERVICE_KEY)
+ENABLED = bool(SUPABASE_KEY)
 
 
 # ---------------------------------------------------------------
@@ -58,8 +58,8 @@ def _rpc_sync(name: str, payload: dict):
         f"{SUPABASE_URL}/rest/v1/rpc/{name}",
         json=payload,
         headers={
-            "apikey": SUPABASE_SERVICE_KEY,
-            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": "application/json",
         },
         timeout=10,
