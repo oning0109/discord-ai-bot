@@ -36,8 +36,7 @@ CHIP_ROLE_IDS = {
 }
 
 BET_WINDOW_MINUTES = 10      # 팀이 확정(또는 변경)된 뒤 베팅을 받는 시간
-WIN_MULT_MIN = 2.0           # 이겼을 때 지급 배율 하한 (유리한 팀)
-WIN_MULT_MAX = 3.0           # 이겼을 때 지급 배율 상한 (불리한 팀)
+WIN_MULTIPLIER = 3.0      # 적중 시 지급 배율: 항상 배팅액의 3배
 MIN_BET = 100                # 최소 베팅 금액
 MAX_BET = 100_000            # 한 경기에서 한 사람이 걸 수 있는 총액
 MIN_WITHDRAW = 1000          # 최소 출금 신청 금액
@@ -78,80 +77,12 @@ async def rpc(name: str, payload: dict):
 # 🧮 배율 계산 / 표시 헬퍼
 # ---------------------------------------------------------------
 def compute_multipliers(team_a: list, team_b: list):
-    """팀 예상 승률의 역수를 배율로 사용 (WIN_MULT_MIN ~ WIN_MULT_MAX 로 제한)."""
+    """양 팀 모두 적중 시 배팅액의 3배를 지급합니다.
 
-    def avg(team):
-        return sum(p.get("adj_mmr", p.get("mmr", 1000)) for p in team) / max(len(team), 1)
-
-    exp_a, exp_b = calculate_expected_win_rate(avg(team_a), avg(team_b))
-    total = (exp_a or 0) + (exp_b or 0)
-
-    def mult(p):
-        if not total or not p or p <= 0:
-            return WIN_MULT_MAX
-        pct = p / total * 100.0
-        return round(min(WIN_MULT_MAX, max(WIN_MULT_MIN, 100.0 / pct)), 1)
-
-    return mult(exp_a), mult(exp_b)
-
-
-def team_to_json(team: list) -> list:
-    return [{"id": str(p["member"].id), "name": p["member"].display_name} for p in team]
-
-
-def fmt_team(team_json: list) -> str:
-    return "\n".join(f"• {m['name']}" for m in team_json) or "없음"
-
-
-def build_market_embed(m: dict) -> discord.Embed:
-    is_open = m.get("open")
-    embed = discord.Embed(
-        title=f"🎰 {m.get('game', '')} 내전 베팅 #{m['id']}",
-        color=discord.Color.gold() if is_open else discord.Color.dark_grey(),
-    )
-    status = f"⏰ 마감 <t:{m['closes_at']}:R>" if is_open else "🔒 베팅이 마감됐어요"
-    desc = f"{status}\n💰 내 칩: **{m.get('balance', 0):,}**"
-    if m.get("my_amount"):
-        side_label = "🔵 A팀" if m.get("my_side") == "A" else "🔴 B팀"
-        mult = m["mult_a"] if m.get("my_side") == "A" else m["mult_b"]
-        desc += f"\n🎟️ 내 베팅: {side_label} **{m['my_amount']:,}**칩 (적중 시 {int(m['my_amount'] * float(mult)):,}칩)"
-    embed.description = desc
-    embed.add_field(
-        name=f"🔵 A팀 — 적중 시 ×{float(m['mult_a']):.1f}",
-        value=f"{fmt_team(m['team_a'])}\n\n💵 총 베팅 {int(m['total_a']):,}칩",
-        inline=True,
-    )
-    embed.add_field(
-        name=f"🔴 B팀 — 적중 시 ×{float(m['mult_b']):.1f}",
-        value=f"{fmt_team(m['team_b'])}\n\n💵 총 베팅 {int(m['total_b']):,}칩",
-        inline=True,
-    )
-    embed.set_footer(text="이기면 건 칩에 배율을 곱해 돌려받고, 지면 건 칩은 사라져요. 참가자·방장은 베팅할 수 없어요.")
-    return embed
-
-
-BET_REASON_TEXT = {
-    "market_closed": "⏰ 이미 베팅이 마감된 경기예요.",
-    "blocked": "🚫 이 경기의 참가자와 방장은 베팅할 수 없어요.",
-    "side_conflict": "↔️ 이미 반대 팀에 베팅했어요. 같은 팀에만 추가로 걸 수 있어요.",
-    "bad_amount": "❌ 금액을 숫자로 입력해 주세요.",
-    "bad_side": "❌ 팀 선택이 올바르지 않아요.",
-}
-
-
-def explain_bet_failure(res: dict) -> str:
-    reason = res.get("reason")
-    if reason == "below_min":
-        return f"❌ 최소 **{int(res.get('min', MIN_BET)):,}**칩부터 걸 수 있어요."
-    if reason == "above_max":
-        return f"❌ 한 경기에서 최대 **{int(res.get('max', MAX_BET)):,}**칩까지 걸 수 있어요."
-    if reason == "insufficient":
-        return (
-            f"💸 칩이 부족해요. (보유 {int(res.get('balance', 0)):,}칩)\n"
-            "`/경험치샵`에서 베팅 칩 역할을 구매하면 자동으로 충전돼요."
-        )
-    return BET_REASON_TEXT.get(reason, f"❌ 베팅에 실패했어요. ({reason})")
-
+    team_a/team_b 인자는 custom_game.py와의 기존 호출 호환성을 위해 유지합니다.
+    패배 베팅은 베팅 시점에 지갑에서 차감된 뒤 정산 때 지급되지 않으므로 소멸합니다.
+    """
+    return WIN_MULTIPLIER, WIN_MULTIPLIER
 
 # ---------------------------------------------------------------
 # 🖥️ /배팅 UI
