@@ -25,7 +25,7 @@ from balancer import calculate_expected_win_rate
 # ⚙️ 설정
 # ---------------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://tdatedpggtutuqrywguk.supabase.co")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkYXRlZHBnZ3R1dHVxcnl3Z3VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3NzY3NjUsImV4cCI6MjEwNzM1Mjc2NX0.QuXGuebYHDGc-2x7rZG-NZSw8Xz7Y-qU4D18HJQH2gg")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkYXRlZHBnZ3R1dHVxcnl3Z3VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3NzY3NjUsImV4cCI6MjEwNzM1Mjc2NX0.QuXGuebYHDGc-2x7rZG-NZSw8Xz7Y-qU4D18HJQH2gg")
 
 # 칩 금액 : LeaderBoard 경험치샵 상품에 연결한 "칩 역할"의 ID (0 = 미설정)
 CHIP_ROLE_IDS = {
