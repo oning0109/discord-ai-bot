@@ -10,22 +10,22 @@
    - 서버(봇) 환경변수에만 넣고, GitHub·웹사이트 코드에는 절대 넣지 마세요.
    - 키가 없으면 베팅 기능만 꺼진 채로 봇은 정상 동작합니다.
 """
-import asyncio
 import os
-import re
-from typing import Optional
+from dotenv import load_dotenv
 
-import discord
-import requests
-from discord.ext import commands, tasks
-
-from balancer import calculate_expected_win_rate
+load_dotenv()
 
 # ---------------------------------------------------------------
 # ⚙️ 설정
 # ---------------------------------------------------------------
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://tdatedpggtutuqrywguk.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkYXRlZHBnZ3R1dHVxcnl3Z3VrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3NzY3NjUsImV4cCI6MjEwNzM1Mjc2NX0.QuXGuebYHDGc-2x7rZG-NZSw8Xz7Y-qU4D18HJQH2gg")
+SUPABASE_URL = os.getenv(
+    "SUPABASE_URL",
+    "https://tdatedpggtutuqrywguk.supabase.co",
+)
+
+# 반드시 .env 또는 서버 환경 변수의 Secret/service_role 키만 사용합니다.
+# 기본값을 두지 않아 anon 키로 실수로 동작하는 것을 막습니다.
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
 
 # 칩 금액 : LeaderBoard 경험치샵 상품에 연결한 "칩 역할"의 ID (0 = 미설정)
 CHIP_ROLE_IDS = {
@@ -35,15 +35,15 @@ CHIP_ROLE_IDS = {
     100000: 1560617544337858571,
 }
 
-BET_WINDOW_MINUTES = 10      # 팀이 확정(또는 변경)된 뒤 베팅을 받는 시간
-WIN_MULTIPLIER = 3.0      # 적중 시 지급 배율: 항상 배팅액의 3배
-MIN_BET = 100                # 최소 베팅 금액
-MAX_BET = 100_000            # 한 경기에서 한 사람이 걸 수 있는 총액
-MIN_WITHDRAW = 1000          # 최소 출금 신청 금액
-BET_ADMIN_CHANNEL_ID = 0     # 출금 신청 알림을 보낼 관리자 채널 ID (0 = 알림 없음)
+BET_WINDOW_MINUTES = 10
+WIN_MULTIPLIER = 3.0
+MIN_BET = 100
+MAX_BET = 100_000
+MIN_WITHDRAW = 1000
+BET_ADMIN_CHANNEL_ID = 0
 
 ROLE_AMOUNTS = {rid: amount for amount, rid in CHIP_ROLE_IDS.items() if rid}
-ENABLED = bool(SUPABASE_KEY)
+ENABLED = bool(SUPABASE_SERVICE_KEY)
 
 
 # ---------------------------------------------------------------
