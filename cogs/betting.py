@@ -18,6 +18,7 @@ from typing import Optional
 import discord
 import requests
 from discord.ext import commands, tasks
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -29,8 +30,7 @@ SUPABASE_URL = os.getenv(
     "https://tdatedpggtutuqrywguk.supabase.co",
 )
 
-# 반드시 .env 또는 서버 환경 변수의 Secret/service_role 키만 사용합니다.
-# 기본값을 두지 않아 anon 키로 실수로 동작하는 것을 막습니다.
+# .env 또는 서버 환경 변수의 Secret/service_role 키를 사용합니다.
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
 
 # 칩 금액 : LeaderBoard 경험치샵 상품에 연결한 "칩 역할"의 ID (0 = 미설정)
@@ -51,6 +51,32 @@ BET_ADMIN_CHANNEL_ID = 0
 ROLE_AMOUNTS = {rid: amount for amount, rid in CHIP_ROLE_IDS.items() if rid}
 ENABLED = bool(SUPABASE_SERVICE_KEY)
 
+# 베팅 실패 사유 매핑
+BET_REASON_TEXT = {
+    "bad_amount": "❌ 올바른 숫자를 입력해 주세요.",
+    "market_closed": "❌ 이미 베팅이 마감된 경기예요.",
+    "insufficient_balance": "❌ 보유한 칩이 부족해요.",
+    "blocked_user": "❌ 경기 참가자나 호스트는 이 경기에 베팅할 수 없어요.",
+}
+
+def explain_bet_failure(res: dict) -> str:
+    reason = res.get("reason", "")
+    return BET_REASON_TEXT.get(reason, f"❌ 베팅 실패: {reason}")
+
+def team_to_json(team: list) -> list:
+    return [{"id": str(p["member"].id), "name": p["member"].display_name} for p in team if "member" in p]
+
+def build_market_embed(market: dict) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"🎰 {market.get('game', '내전')} #{market.get('id')} 베팅",
+        color=discord.Color.blue()
+    )
+    names_a = [x["name"] for x in market.get("team_a", [])]
+    names_b = [x["name"] for x in market.get("team_b", [])]
+    embed.add_field(name="🔵 A팀", value=", ".join(names_a) if names_a else "없음", inline=True)
+    embed.add_field(name="🔴 B팀", value=", ".join(names_b) if names_b else "없음", inline=True)
+    return embed
+
 
 # ---------------------------------------------------------------
 # 🔌 Supabase RPC (service_role)
@@ -64,8 +90,8 @@ def _rpc_sync(name: str, payload: dict):
         f"{SUPABASE_URL}/rest/v1/rpc/{name}",
         json=payload,
         headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "apikey": SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
             "Content-Type": "application/json",
         },
         timeout=10,
@@ -83,11 +109,6 @@ async def rpc(name: str, payload: dict):
 # 🧮 배율 계산 / 표시 헬퍼
 # ---------------------------------------------------------------
 def compute_multipliers(team_a: list, team_b: list):
-    """양 팀 모두 적중 시 배팅액의 3배를 지급합니다.
-
-    team_a/team_b 인자는 custom_game.py와의 기존 호출 호환성을 위해 유지합니다.
-    패배 베팅은 베팅 시점에 지갑에서 차감된 뒤 정산 때 지급되지 않으므로 소멸합니다.
-    """
     return WIN_MULTIPLIER, WIN_MULTIPLIER
 
 # ---------------------------------------------------------------
