@@ -318,6 +318,19 @@ class BettingCog(commands.Cog):
         if _cog is self:
             _cog = None
 
+    # ---------------- custom_game.py 연동용 훅 (bot.get_cog 로 호출) ----------------
+    async def hook_match_started(self, guild_id, channel_id, message_id, game, host_id, team_a, team_b):
+        await self.open_market(guild_id, channel_id, message_id, game, host_id, team_a, team_b, changed=False)
+
+    async def hook_teams_changed(self, guild_id, channel_id, message_id, game, host_id, team_a, team_b):
+        await self.open_market(guild_id, channel_id, message_id, game, host_id, team_a, team_b, changed=True)
+
+    async def hook_match_finished(self, channel_id, message_id, winner_side):
+        await self.settle_market(channel_id, message_id, winner_side)
+
+    async def hook_match_cancelled(self, channel_id, message_id):
+        await self.cancel_market(channel_id, message_id)
+
     # ---------------- 마켓 관리 ----------------
     async def _channel(self, channel_id):
         if not channel_id:
@@ -350,6 +363,7 @@ class BettingCog(commands.Cog):
                 "p_window_seconds": BET_WINDOW_MINUTES * 60,
                 "p_title": None,
             })
+            print(f"🎰 [베팅 마켓 열림] #{(res or {}).get('market_id')} · 메시지 {message_id} · {game} · 배율 A×{mult_a} / B×{mult_b} · {BET_WINDOW_MINUTES}분", flush=True)
             refunded = (res or {}).get("refunded") or []
             if refunded:
                 ch = await self._channel(channel_id)
@@ -497,7 +511,7 @@ class BettingCog(commands.Cog):
 
         if not markets:
             await ctx.send(
-                f"지금 베팅할 수 있는 경기가 없어요.\n(팀이 확정된 뒤 {BET_WINDOW_MINUTES}분 동안만 베팅할 수 있어요.)",
+                f"지금 베팅할 수 있는 경기가 없어요.\n방장이 대기실에서 **팀 짜기 시작**을 눌러 팀이 확정된 뒤 {BET_WINDOW_MINUTES}분 동안만 베팅할 수 있어요.",
                 ephemeral=True,
             )
             return
