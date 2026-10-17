@@ -7,19 +7,18 @@ from discord.ext import commands
 from db_manager import DBManager, TIER_SCORES, OW_MMR_STEP
 from balancer import balance_teams_with_roles, calculate_expected_win_rate, OW_ROLE_LABEL, OW_EXCLUDED_MMR, split_key
 
-try:
-    import betting  # 🎰 베팅 시스템 (betting.py) — 없어도 내전 기능은 정상 동작
-except Exception as _bet_import_error:  # pragma: no cover
-    print(f"⚠️ [베팅 모듈 불러오기 실패] {_bet_import_error}", flush=True)
-    betting = None
 
-
-async def bet_hook(name: str, *args):
-    """베팅 연동 호출. 오류가 나도 내전 진행에는 영향을 주지 않는다."""
-    if betting is None:
+async def bet_hook(client, name: str, *args):
+    """🎰 베팅 연동 호출 (bot.get_cog 사용). 오류가 나도 내전 진행에는 영향을 주지 않는다."""
+    cog = client.get_cog("BettingCog") if client is not None else None
+    if cog is None:
+        print(f"ℹ️ [베팅] {name}: BettingCog 가 로드되지 않아 건너뜀 (load_extension('betting') 확인)", flush=True)
+        return
+    if not getattr(cog, "enabled", False):
+        print(f"ℹ️ [베팅] {name}: 베팅 기능이 꺼져 있어 건너뜀 (SUPABASE_SERVICE_KEY 확인)", flush=True)
         return
     try:
-        await getattr(betting, name)(*args)
+        await getattr(cog, "hook_" + name)(*args)
     except Exception as e:
         print(f"❌ [베팅 연동 에러:{name}] {e}", flush=True)
 
@@ -251,7 +250,7 @@ class TeamSwapSelectView(discord.ui.View):
         )
         pv = self.parent_view
         await bet_hook(
-            "on_teams_changed", pv.guild_id, pv.channel_id, pv.source_message_id,
+            interaction.client, "teams_changed", pv.guild_id, pv.channel_id, pv.source_message_id,
             pv.game, pv.host_id, pv.team_a, pv.team_b,
         )
 
@@ -284,7 +283,7 @@ class MatchResultView(discord.ui.View):
         await interaction.response.defer()
 
         # 🎰 이 경기의 베팅 정산 (승리 팀 적중자 지급 / 실패자 칩 소멸)
-        await bet_hook("on_match_finished", self.channel_id, self.source_message_id, winner_side)
+        await bet_hook(interaction.client, "match_finished", self.channel_id, self.source_message_id, winner_side)
 
         loser_side = "B" if winner_side == "A" else "A"
         failed, entries = [], []
@@ -335,7 +334,7 @@ class MatchResultView(discord.ui.View):
     @discord.ui.button(label="❌ 무효 / 취소", style=discord.ButtonStyle.secondary, row=0)
     async def cancel_match(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        await bet_hook("on_match_cancelled", self.channel_id, self.source_message_id)
+        await bet_hook(interaction.client, "match_cancelled", self.channel_id, self.source_message_id)
         await interaction.edit_original_response(content="⚠️ 경기가 전적 반영 없이 종료되었습니다.", view=None)
 
     # 🔘 팀 수동 교체 버튼 (방장 전용)
@@ -372,7 +371,7 @@ class MatchResultView(discord.ui.View):
             embed.set_footer(text="가능한 조합을 모두 보여드려서 처음부터 다시 섞었어요.")
         await interaction.response.edit_message(embed=embed, view=self)
         await bet_hook(
-            "on_teams_changed", self.guild_id, self.channel_id, self.source_message_id,
+            interaction.client, "teams_changed", self.guild_id, self.channel_id, self.source_message_id,
             self.game, self.host_id, self.team_a, self.team_b,
         )
 
@@ -991,7 +990,7 @@ class PersistentMatchLobbyView(discord.ui.View):
             result_view.channel_id = interaction.channel_id
             result_view.guild_id = interaction.guild_id
             await bet_hook(
-                "on_match_started", interaction.guild_id, interaction.channel_id, msg_id,
+                interaction.client, "match_started", interaction.guild_id, interaction.channel_id, msg_id,
                 selected_game, int(lobby["host_id"]), team_a, team_b,
             )
         except Exception as e:
