@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 import discord
@@ -5,6 +6,22 @@ from discord import app_commands
 from discord.ext import commands
 from db_manager import DBManager, TIER_SCORES, OW_MMR_STEP
 from balancer import balance_teams_with_roles, calculate_expected_win_rate, OW_ROLE_LABEL, OW_EXCLUDED_MMR, split_key
+
+try:
+    import betting  # 🎰 베팅 시스템 (betting.py) — 없어도 내전 기능은 정상 동작
+except Exception as _bet_import_error:  # pragma: no cover
+    print(f"⚠️ [베팅 모듈 불러오기 실패] {_bet_import_error}", flush=True)
+    betting = None
+
+
+async def bet_hook(name: str, *args):
+    """베팅 연동 호출. 오류가 나도 내전 진행에는 영향을 주지 않는다."""
+    if betting is None:
+        return
+    try:
+        await getattr(betting, name)(*args)
+    except Exception as e:
+        print(f"❌ [베팅 연동 에러:{name}] {e}", flush=True)
 
 # 📌 팀원들을 이동시킬 디스코드 음성 채널(통화방) ID 입력
 VOICE_CHANNEL_A_ID = 1558806907706282004  # A팀 통화방 ID
@@ -232,6 +249,11 @@ class TeamSwapSelectView(discord.ui.View):
             f"🔄 **교체 완료!** {p_a['member'].mention} 님과 {p_b['member'].mention} 님의 팀이 교체되었습니다.",
             ephemeral=True
         )
+        pv = self.parent_view
+        await bet_hook(
+            "on_teams_changed", pv.guild_id, pv.channel_id, pv.source_message_id,
+            pv.game, pv.host_id, pv.team_a, pv.team_b,
+        )
 
 
 class MatchResultView(discord.ui.View):
@@ -244,6 +266,9 @@ class MatchResultView(discord.ui.View):
         self.db = db
         self.finished = False
         self.seen_splits = {split_key(team_a, team_b)}  # 다시 섞기에서 이미 보여준 조합
+        self.source_message_id = None  # 🎰 베팅 연동용: 팀 구성 메시지 ID
+        self.channel_id = None
+        self.guild_id = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.host_id:
@@ -257,6 +282,9 @@ class MatchResultView(discord.ui.View):
             return
         self.finished = True
         await interaction.response.defer()
+
+        # 🎰 이 경기의 베팅 정산 (승리 팀 적중자 지급 / 실패자 칩 소멸)
+        await bet_hook("on_match_finished", self.channel_id, self.source_message_id, winner_side)
 
         loser_side = "B" if winner_side == "A" else "A"
         failed, entries = [], []
@@ -307,6 +335,7 @@ class MatchResultView(discord.ui.View):
     @discord.ui.button(label="❌ 무효 / 취소", style=discord.ButtonStyle.secondary, row=0)
     async def cancel_match(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
+        await bet_hook("on_match_cancelled", self.channel_id, self.source_message_id)
         await interaction.edit_original_response(content="⚠️ 경기가 전적 반영 없이 종료되었습니다.", view=None)
 
     # 🔘 팀 수동 교체 버튼 (방장 전용)
@@ -342,6 +371,10 @@ class MatchResultView(discord.ui.View):
         if repeated:
             embed.set_footer(text="가능한 조합을 모두 보여드려서 처음부터 다시 섞었어요.")
         await interaction.response.edit_message(embed=embed, view=self)
+        await bet_hook(
+            "on_teams_changed", self.guild_id, self.channel_id, self.source_message_id,
+            self.game, self.host_id, self.team_a, self.team_b,
+        )
 
     # 🔊 통화방 일괄 이동 버튼 (방장 전용)
     @discord.ui.button(label="통화방 이동 🔊", style=discord.ButtonStyle.success, row=1, custom_id="match_result:move_voice")
@@ -491,6 +524,264 @@ class EditGameSelectView(discord.ui.View):
         await interaction.response.edit_message(content=msg, view=tier_view)
 
 
+# 🏠 대기실 임베드 생성 (대기실 버튼/인원 추가·제외 등 어디서든 재사용)
+async def build_lobby_embed(guild, db: DBManager, message_id: int) -> Optional[discord.Embed]:
+    lobby = db.get_lobby(message_id)
+    if not lobby:
+        return None
+
+    participant_ids = db.get_lobby_participants(message_id)
+    selected_game = lobby["selected_game"]
+    host_id = int(lobby["host_id"])
+
+    host_member = guild.get_member(host_id) if guild else None
+    if not host_member and guild:
+        try:
+            host_member = await guild.fetch_member(host_id)
+        except Exception:
+            host_member = None
+
+    host_name = host_member.display_name if host_member else f"유저({host_id})"
+
+    member_mentions = []
+    for idx, uid in enumerate(participant_ids, start=1):
+        uid_int = int(uid)
+        m = guild.get_member(uid_int) if guild else None
+        if m:
+            member_mentions.append(f"{idx}. {m.mention}")
+        else:
+            member_mentions.append(f"{idx}. <@{uid_int}>")
+
+    member_list_str = "\n".join(member_mentions)
+
+    embed = discord.Embed(
+        title=f"📢 내전 대기실 ({selected_game.upper()})",
+        description="아래 버튼을 눌러 내전에 참가하거나 취소하세요!",
+        color=discord.Color.blue(),
+    )
+    embed.add_field(
+        name=f"👥 현재 참가자 목록 ({len(participant_ids)}명)",
+        value=member_list_str if member_list_str else "아직 참가자가 없습니다.",
+        inline=False,
+    )
+    embed.set_footer(text=f"방장: {host_name}")
+    return embed
+
+
+# ➕ 선택한 유저들을 대기실에 일괄 추가 (봇/중복/프로필 미등록자는 건너뜀)
+def add_members_to_lobby(db: DBManager, message_id: int, game: str, members) -> dict:
+    existing = {int(p) for p in db.get_lobby_participants(message_id)}
+    result = {"added": [], "duplicated": [], "no_profile": [], "bots": []}
+
+    for m in members:
+        if getattr(m, "bot", False):
+            result["bots"].append(m)
+        elif m.id in existing:
+            result["duplicated"].append(m)
+        elif not db.has_user_profile(m.id, game):
+            result["no_profile"].append(m)
+        else:
+            db.add_participant(message_id, m.id)
+            existing.add(m.id)
+            result["added"].append(m)
+    return result
+
+
+def summarize_add_result(result: dict, game: str) -> str:
+    lines = []
+    if result["added"]:
+        lines.append(f"✅ 추가됨 ({len(result['added'])}명): " + ", ".join(m.mention for m in result["added"]))
+    if result["duplicated"]:
+        lines.append("ℹ️ 이미 참가 중: " + ", ".join(m.mention for m in result["duplicated"]))
+    if result["no_profile"]:
+        lines.append(
+            f"⚠️ **[{game}]** 프로필이 없어 제외됨 (`/등록` 필요): "
+            + ", ".join(m.mention for m in result["no_profile"])
+        )
+    if result["bots"]:
+        lines.append("🤖 봇은 추가할 수 없어요.")
+    return "\n".join(lines) if lines else "추가할 인원이 없습니다."
+
+
+# 📢 /모집 첫 화면: 게임 + 미리 참여할 인원을 고른 뒤 [확인]을 누르면 대기실 생성
+class LobbySetupView(discord.ui.View):
+    def __init__(self, db: DBManager, host, channel, preset_members=None):
+        super().__init__(timeout=300)
+        self.db = db
+        self.host = host
+        self.channel = channel
+        self.preset_members = list(preset_members or [])  # /모집 인원:@닉1 @닉2 로 미리 지정한 인원
+        self.game = "발로란트"
+
+        self.game_select = discord.ui.Select(
+            placeholder="🎮 내전할 게임 (기본: 발로란트)",
+            options=[
+                discord.SelectOption(label="발로란트", value="발로란트", emoji="🎯", default=True),
+                discord.SelectOption(label="오버워치", value="옵치", emoji="🛡️"),
+                discord.SelectOption(label="리그 오브 레전드", value="롤", emoji="⚔️"),
+            ],
+            row=0,
+        )
+        self.game_select.callback = self.on_game_select
+        self.add_item(self.game_select)
+
+        self.user_select = discord.ui.UserSelect(
+            placeholder="👥 미리 참여할 인원 선택 (최대 25명 / 안 골라도 됩니다)",
+            min_values=0,
+            max_values=25,
+            row=1,
+        )
+        self.user_select.callback = self.on_user_select
+        self.add_item(self.user_select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.host.id:
+            await interaction.response.send_message("❌ 모집을 시작한 방장만 조작할 수 있습니다!", ephemeral=True)
+            return False
+        return True
+
+    async def on_game_select(self, interaction: discord.Interaction):
+        self.game = self.game_select.values[0]
+        await interaction.response.defer()
+
+    async def on_user_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+    @discord.ui.button(label="확인 (대기실 만들기)", style=discord.ButtonStyle.success, emoji="✅", row=2)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        try:
+            # @태그로 지정한 인원 + 드롭다운으로 고른 인원 (중복 제거)
+            merged = {}
+            for m in self.preset_members + list(self.user_select.values):
+                merged[m.id] = m
+            members = list(merged.values())
+
+            embed = discord.Embed(
+                title=f"📢 내전 대기실 ({self.game.upper()})",
+                description="아래 버튼을 눌러 내전에 참가하거나 취소하세요!",
+                color=discord.Color.blue(),
+            )
+            embed.add_field(name="👥 현재 참가자 목록 (0명)", value="아직 참가자가 없습니다.", inline=False)
+            embed.set_footer(text=f"방장: {self.host.display_name}")
+
+            msg = await self.channel.send(embed=embed, view=PersistentMatchLobbyView(db=self.db))
+
+            self.db.create_lobby(
+                message_id=msg.id,
+                channel_id=self.channel.id,
+                host_id=self.host.id,
+                game=self.game,
+            )
+
+            result = add_members_to_lobby(self.db, msg.id, self.game, members)
+
+            lobby_embed = await build_lobby_embed(interaction.guild, self.db, msg.id)
+            if lobby_embed:
+                await msg.edit(embed=lobby_embed)
+
+            text = "✅ 내전 대기실을 만들었어요! 대기실의 **인원 추가 / 인원 제외** 버튼으로 언제든 명단을 바꿀 수 있습니다."
+            if members:
+                text += "\n\n" + summarize_add_result(result, self.game)
+            await interaction.edit_original_response(content=text, view=None)
+            self.stop()
+        except Exception as e:
+            print(f"❌ [LobbySetupView 에러] {e}", flush=True)
+            await interaction.followup.send(f"❌ 대기실 생성 중 오류가 발생했습니다: {e}", ephemeral=True)
+
+    @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary, row=2)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="❎ 대기실 만들기를 취소했습니다.", view=None)
+        self.stop()
+
+
+# ➕ 대기실에서 방장이 인원을 추가하는 임시(본인에게만 보이는) 메뉴
+class LobbyAddMembersView(discord.ui.View):
+    def __init__(self, db: DBManager, lobby_message: discord.Message):
+        super().__init__(timeout=120)
+        self.db = db
+        self.lobby_message = lobby_message
+
+        self.user_select = discord.ui.UserSelect(
+            placeholder="➕ 추가할 인원 선택 (최대 25명)",
+            min_values=1,
+            max_values=25,
+        )
+        self.user_select.callback = self.on_select
+        self.add_item(self.user_select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            lobby = self.db.get_lobby(self.lobby_message.id)
+            if not lobby:
+                await interaction.edit_original_response(content="❌ 만료되었거나 이미 종료된 대기실입니다.", view=None)
+                return
+            if interaction.user.id != int(lobby["host_id"]):
+                await interaction.edit_original_response(content="❌ 인원 추가 권한은 방장에게 있습니다.", view=None)
+                return
+
+            game = lobby["selected_game"]
+            result = add_members_to_lobby(self.db, self.lobby_message.id, game, list(self.user_select.values))
+
+            embed = await build_lobby_embed(interaction.guild, self.db, self.lobby_message.id)
+            if embed:
+                await self.lobby_message.edit(embed=embed)
+
+            await interaction.edit_original_response(content=summarize_add_result(result, game), view=None)
+            self.stop()
+        except Exception as e:
+            print(f"❌ [LobbyAddMembersView 에러] {e}", flush=True)
+            await interaction.followup.send(f"❌ 인원 추가 중 오류가 발생했습니다: {e}", ephemeral=True)
+
+
+# ➖ 대기실에서 방장이 대기자를 빼는 임시(본인에게만 보이는) 메뉴
+class LobbyRemoveMembersView(discord.ui.View):
+    def __init__(self, db: DBManager, lobby_message: discord.Message, options: list):
+        super().__init__(timeout=120)
+        self.db = db
+        self.lobby_message = lobby_message
+
+        self.member_select = discord.ui.Select(
+            placeholder="➖ 제외할 대기자 선택",
+            min_values=1,
+            max_values=len(options),
+            options=options,
+        )
+        self.member_select.callback = self.on_select
+        self.add_item(self.member_select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            lobby = self.db.get_lobby(self.lobby_message.id)
+            if not lobby:
+                await interaction.edit_original_response(content="❌ 만료되었거나 이미 종료된 대기실입니다.", view=None)
+                return
+            if interaction.user.id != int(lobby["host_id"]):
+                await interaction.edit_original_response(content="❌ 인원 제외 권한은 방장에게 있습니다.", view=None)
+                return
+
+            current = {int(p) for p in self.db.get_lobby_participants(self.lobby_message.id)}
+            removed = []
+            for v in self.member_select.values:
+                uid = int(v)
+                if uid in current:
+                    self.db.remove_participant(self.lobby_message.id, uid)
+                    removed.append(uid)
+
+            embed = await build_lobby_embed(interaction.guild, self.db, self.lobby_message.id)
+            if embed:
+                await self.lobby_message.edit(embed=embed)
+
+            text = "✅ 제외됨: " + ", ".join(f"<@{u}>" for u in removed) if removed else "제외할 인원이 없습니다."
+            await interaction.edit_original_response(content=text, view=None)
+            self.stop()
+        except Exception as e:
+            print(f"❌ [LobbyRemoveMembersView 에러] {e}", flush=True)
+            await interaction.followup.send(f"❌ 인원 제외 중 오류가 발생했습니다: {e}", ephemeral=True)
+
+
 class PersistentGameSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -535,45 +826,9 @@ class PersistentMatchLobbyView(discord.ui.View):
 
     async def update_lobby_embed(self, interaction: discord.Interaction, message_id: int):
         try:
-            lobby = self.db.get_lobby(message_id)
-            if not lobby:
+            embed = await build_lobby_embed(interaction.guild, self.db, message_id)
+            if embed is None:
                 return
-
-            participant_ids = self.db.get_lobby_participants(message_id)
-            selected_game = lobby["selected_game"]
-            host_id = int(lobby["host_id"])
-
-            host_member = interaction.guild.get_member(host_id) if interaction.guild else None
-            if not host_member and interaction.guild:
-                try:
-                    host_member = await interaction.guild.fetch_member(host_id)
-                except Exception:
-                    host_member = None
-
-            host_name = host_member.display_name if host_member else f"유저({host_id})"
-
-            member_mentions = []
-            for idx, uid in enumerate(participant_ids, start=1):
-                uid_int = int(uid)
-                m = interaction.guild.get_member(uid_int) if interaction.guild else None
-                if m:
-                    member_mentions.append(f"{idx}. {m.mention}")
-                else:
-                    member_mentions.append(f"{idx}. <@{uid_int}>")
-
-            member_list_str = "\n".join(member_mentions)
-
-            embed = discord.Embed(
-                title=f"📢 내전 대기실 ({selected_game.upper()})",
-                description="아래 버튼을 눌러 내전에 참가하거나 취소하세요!",
-                color=discord.Color.blue(),
-            )
-            embed.add_field(
-                name=f"👥 현재 참가자 목록 ({len(participant_ids)}명)",
-                value=member_list_str if member_list_str else "아직 참가자가 없습니다.",
-                inline=False,
-            )
-            embed.set_footer(text=f"방장: {host_name}")
 
             if interaction.response.is_done():
                 await interaction.edit_original_response(embed=embed, view=self)
@@ -630,6 +885,46 @@ class PersistentMatchLobbyView(discord.ui.View):
         except Exception as e:
             print(f"❌ [leave_button 에러] {e}", flush=True)
             await interaction.followup.send(f"❌ 취소 처리 중 오류가 발생했습니다: {e}", ephemeral=True)
+
+    @discord.ui.button(label="인원 추가", style=discord.ButtonStyle.secondary, emoji="➕", row=0, custom_id="persistent_lobby:add_members")
+    async def add_members_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        lobby = self.db.get_lobby(interaction.message.id)
+        if not lobby:
+            await interaction.response.send_message("❌ 만료되었거나 이미 종료된 대기실입니다.", ephemeral=True)
+            return
+        if interaction.user.id != int(lobby["host_id"]):
+            await interaction.response.send_message("❌ 인원 추가 권한은 방장에게 있습니다.", ephemeral=True)
+            return
+
+        view = LobbyAddMembersView(self.db, interaction.message)
+        await interaction.response.send_message(
+            f"➕ **[{lobby['selected_game']}]** 대기실에 추가할 인원을 선택하세요.", view=view, ephemeral=True
+        )
+
+    @discord.ui.button(label="인원 제외", style=discord.ButtonStyle.secondary, emoji="➖", row=0, custom_id="persistent_lobby:remove_members")
+    async def remove_members_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        lobby = self.db.get_lobby(interaction.message.id)
+        if not lobby:
+            await interaction.response.send_message("❌ 만료되었거나 이미 종료된 대기실입니다.", ephemeral=True)
+            return
+        if interaction.user.id != int(lobby["host_id"]):
+            await interaction.response.send_message("❌ 인원 제외 권한은 방장에게 있습니다.", ephemeral=True)
+            return
+
+        participant_ids = [int(p) for p in self.db.get_lobby_participants(interaction.message.id)]
+        if not participant_ids:
+            await interaction.response.send_message("제외할 대기자가 없습니다.", ephemeral=True)
+            return
+
+        options = []
+        for uid in participant_ids[:25]:  # 드롭다운 한도 25
+            m = interaction.guild.get_member(uid) if interaction.guild else None
+            name = m.display_name if m else f"유저({uid})"
+            options.append(discord.SelectOption(label=name[:100], value=str(uid)))
+
+        note = "\n(참가자가 25명을 넘어 앞의 25명만 표시됩니다.)" if len(participant_ids) > 25 else ""
+        view = LobbyRemoveMembersView(self.db, interaction.message, options)
+        await interaction.response.send_message(f"➖ 대기실에서 뺄 인원을 선택하세요.{note}", view=view, ephemeral=True)
 
     @discord.ui.button(label="팀 짜기 시작", style=discord.ButtonStyle.primary, emoji="🎲", row=2, custom_id="persistent_lobby:start")
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -690,6 +985,15 @@ class PersistentMatchLobbyView(discord.ui.View):
 
             result_view = MatchResultView(int(lobby["host_id"]), selected_game, team_a, team_b, self.db)
             await interaction.edit_original_response(embed=result_embed, view=result_view)
+
+            # 🎰 팀이 확정되면 이 경기의 베팅 마켓을 연다 (관전자는 /배팅 으로 참여)
+            result_view.source_message_id = msg_id
+            result_view.channel_id = interaction.channel_id
+            result_view.guild_id = interaction.guild_id
+            await bet_hook(
+                "on_match_started", interaction.guild_id, interaction.channel_id, msg_id,
+                selected_game, int(lobby["host_id"]), team_a, team_b,
+            )
         except Exception as e:
             print(f"❌ [start_button 에러] {e}", flush=True)
             await interaction.followup.send(f"❌ 팀 구성 중 오류가 발생했습니다: {e}", ephemeral=True)
@@ -755,26 +1059,41 @@ class CustomGame(commands.Cog):
         view = TierSelectView(ctx.author.id, "발로란트", self.db, step2_lol)
         await ctx.send(f"📝 {ctx.author.mention}님, 프로필 등록을 시작합니다.\n1단계: **[발로란트]** 티어를 선택하세요.", view=view, ephemeral=True)
 
-    @commands.hybrid_command(name="모집", description="버튼으로 참가자를 모집하는 내전 대기실을 생성합니다.")
-    async def start_lobby(self, ctx: commands.Context):
-        view = PersistentMatchLobbyView(db=self.db)
+    @commands.hybrid_command(name="모집", description="내전 대기실을 만듭니다. @태그로 참여할 인원을 미리 넣을 수 있어요.")
+    @app_commands.describe(members="미리 참여할 사람을 @태그로 입력하세요 (예: @철수 @영희) — 선택 사항")
+    @app_commands.rename(members="인원")
+    async def start_lobby(self, ctx: commands.Context, *, members: Optional[str] = None):
+        preset = []
+        not_found = 0
+        if members and ctx.guild:
+            seen = set()
+            for uid in re.findall(r"<@!?(\d+)>", members):
+                uid = int(uid)
+                if uid in seen:
+                    continue
+                seen.add(uid)
+                m = ctx.guild.get_member(uid)
+                if m is None:
+                    try:
+                        m = await ctx.guild.fetch_member(uid)
+                    except Exception:
+                        m = None
+                if m is None or m.bot:
+                    not_found += 1
+                    continue
+                preset.append(m)
 
-        embed = discord.Embed(
-            title="📢 내전 대기실 (발로란트)",
-            description="아래 버튼을 눌러 내전에 참가하거나 취소하세요!",
-            color=discord.Color.blue(),
+        view = LobbySetupView(self.db, ctx.author, ctx.channel, preset_members=preset)
+        text = (
+            "📢 **내전 대기실 만들기**\n"
+            "게임을 고르고, 아래 메뉴에서 미리 참여할 인원을 **@태그처럼 검색해서** 골라 주세요. 다 골랐으면 **확인**을 누르세요.\n"
+            "(인원은 안 골라도 되고, 만든 뒤에도 대기실의 **인원 추가 / 인원 제외** 버튼으로 바꿀 수 있어요.)"
         )
-        embed.add_field(name="👥 현재 참가자 목록 (0명)", value="아직 참가자가 없습니다.", inline=False)
-        embed.set_footer(text=f"방장: {ctx.author.display_name}")
-
-        msg = await ctx.send(embed=embed, view=view)
-
-        self.db.create_lobby(
-            message_id=msg.id,
-            channel_id=ctx.channel.id,
-            host_id=ctx.author.id,
-            game="발로란트",
-        )
+        if preset:
+            text += "\n\n📌 **@태그로 미리 지정한 인원:** " + ", ".join(m.mention for m in preset)
+        if not_found:
+            text += f"\n⚠️ 찾을 수 없거나 봇인 대상 {not_found}명은 제외했어요."
+        await ctx.send(text, view=view, ephemeral=True)
 
     @commands.hybrid_command(name="조회", description="특정 유저(또는 본인)의 MMR, 티어, 전적 프로필을 조회합니다.")
     async def view_profile(self, ctx: commands.Context, target: discord.Member = None):
