@@ -6,7 +6,7 @@ from discord.ext import commands, tasks
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 # 🌟 생일 축하 메시지를 발송할 채널 ID (본인 서버 채널 ID로 변경 필수)
-ANNOUNCEMENT_CHANNEL_ID = 1557870696305008712  
+ANNOUNCEMENT_CHANNEL_ID = 1557866992512409650  
 
 
 class Birthday(commands.Cog):
