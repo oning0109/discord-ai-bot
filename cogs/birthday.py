@@ -46,10 +46,11 @@ class Birthday(commands.Cog):
                 color=0xFFD700,
             )
             embed.set_thumbnail(
-                url="https://i.namu.wiki/i/hjmKzkBU2dSFzcMGW-2FGuhLw2KJsRh0QICaMPUWpUhDKfNNewH-PNO4_jdir725sYrgFJd4vykBGsk5FQ_UJA.webp"
+                url="https://namu.wiki"
             )
 
-            await channel.send(content=f"🎉 <@{discord_id}>", embed=embed)
+            # 🛠️ @everyone 태그와 유저 멘션을 함께 보냅니다.
+            await channel.send(content=f"@everyone 🎉 오늘의 주인공 <@{discord_id}>님을 축하해 주세요!", embed=embed)
 
     @commands.command(name="생일등록")
     async def register_birthday(self, ctx, date_str: str):
