@@ -115,7 +115,7 @@ def compute_multipliers(team_a: list, team_b: list):
     return WIN_MULTIPLIER, WIN_MULTIPLIER
 
 # ---------------------------------------------------------------
-# 🖥️ /배팅 및 /사탕뽑기 UI 컴포넌트
+# 🖥️ /배팅 UI 컴포넌트
 # ---------------------------------------------------------------
 class BetAmountModal(discord.ui.Modal):
     def __init__(self, user_id: int, market_id: int, side: str):
@@ -222,11 +222,11 @@ class MarketSelectView(discord.ui.View):
 
         options = []
         for m in markets[:25]:
-            names_a = [x["name"] for x in m["team_a"]]
-            names_b = [x["name"] for x in m["team_b"]]
+            names_a = [x["name"] for x in m.get("team_a", [])]
+            names_b = [x["name"] for x in m.get("team_b", [])]
             desc = f"🔵 {', '.join(names_a[:3])} vs 🔴 {', '.join(names_b[:3])}"[:100]
             options.append(discord.SelectOption(
-                label=f"{m['game']} #{m['id']} · {len(names_a)}v{len(names_b)}"[:100],
+                label=f"{m.get('game', '내전')} #{m.get('id')} · {len(names_a)}v{len(names_b)}"[:100],
                 description=desc,
                 value=str(m["id"]),
             ))
