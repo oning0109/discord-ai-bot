@@ -36,7 +36,7 @@ async def main():
             "cogs.schedule",
             "cogs.match_history",
             "cogs.betting",
-            "candy_system"
+            "cogs.candy_system"
         ]
 
         # 각 Cog 모듈 로드
