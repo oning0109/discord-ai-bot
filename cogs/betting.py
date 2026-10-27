@@ -241,3 +241,4 @@ class MarketSelectView(discord.ui.View):
                 return
             await interaction.edit_original_response(
                 content=None,
+                embed=build_market_embed(market),
