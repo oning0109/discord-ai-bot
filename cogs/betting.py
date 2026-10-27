@@ -1,23 +1,16 @@
 """
-🎰 내전 베팅 시스템 (관전자용)
-
-- 칩 충전: LeaderBoard 경험치샵에서 "칩 역할"을 구매 → 이 봇이 역할 부여를 감지해 칩을 입금하고 역할을 회수
-- 경기 확정 시 베팅 마켓이 자동으로 열리고(custom_game.py 연동), 관전자는 /배팅 으로 경기를 골라 참여
-- 이기면 건 칩 x 배율(기본 2.0~3.0배) 지급, 지면 건 칩은 소멸
-- 출금: /출금 으로 신청 → 관리자가 LeaderBoard /경험치추가 로 지급한 뒤 관리자 페이지에서 완료 처리
-
-⚠️ 이 모듈은 Supabase service_role 키(SUPABASE_SERVICE_KEY)가 필요합니다.
-   - 서버(봇) 환경변수에만 넣고, GitHub·웹사이트 코드에는 절대 넣지 마세요.
-   - 키가 없으면 베팅 기능만 꺼진 채로 봇은 정상 동작합니다.
+🎰 내전 베팅 및 🎃 사탕뽑기 통합 시스템 (관전자용)
 """
 import asyncio
 import os
 import re
+import random
 from typing import Optional
 
 import discord
 import requests
 from discord.ext import commands, tasks
+from discord import app_commands
 from dotenv import load_dotenv
 
 # .env 파일에서 환경변수 로드
@@ -31,7 +24,6 @@ SUPABASE_URL = os.getenv(
     "https://supabase.co",
 )
 
-# .env 파일의 SUPABASE_SERVICE_KEY를 가져옵니다.
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
 
 # 칩 금액 : LeaderBoard 경험치샵 상품에 연결한 "칩 역할"의 ID (0 = 미설정)
@@ -51,12 +43,21 @@ MIN_WITHDRAW = 1000
 # 🧾 관리자 전용 채널 (출금 신청 알림이 전송되는 곳)
 BET_ADMIN_CHANNEL_ID = 1556370974130184313
 
-# 📢 [설정 수정] 일반 사람들에게 베팅 시작 안내와 @everyone 태그를 보낼 공개 채널 ID를 입력하세요.
-# (예: 1557866992512409650 형태로 수정 / 0으로 두면 기존처럼 팀 짜기가 실행된 대기실 채널에 발송)
+# 📢 일반 사람들에게 베팅 시작 안내와 @everyone 태그를 보낼 공개 채널 ID
 BET_PUBLIC_ANNOUNCEMENT_CHANNEL_ID = 1557756931597402123
 
 ROLE_AMOUNTS = {rid: amount for amount, rid in CHIP_ROLE_IDS.items() if rid}
 ENABLED = bool(SUPABASE_SERVICE_KEY)
+
+# 🎃 사탕 설정 및 가중치(확률 %) 설정
+CANDY_TYPES = [
+    {"name": "🍬 일반사탕", "chips": 1000, "weight": 40},
+    {"name": "🍭 달콤한 사탕", "chips": 3000, "weight": 30},
+    {"name": "🎃 황금호박", "chips": 10000, "weight": 15},
+    {"name": "🦇 박쥐사탕", "chips": 15000, "weight": 10},
+    {"name": "👻 저주받은 사탕 (대박)", "chips": 20000, "weight": 2.5},
+    {"name": "💀 저주받은 사탕 (꽝)", "chips": 0, "weight": 2.5},
+]
 
 # ---------------------------------------------------------------
 # 🛠️ 베팅 헬퍼 함수
@@ -86,13 +87,11 @@ def build_market_embed(market: dict) -> discord.Embed:
     embed.add_field(name="🔴 B팀", value=", ".join(names_b) if names_b else "없음", inline=True)
     return embed
 
-
 # ---------------------------------------------------------------
 # 🔌 Supabase RPC (service_role)
 # ---------------------------------------------------------------
 class BetError(Exception):
     pass
-
 
 def _rpc_sync(name: str, payload: dict):
     res = requests.post(
@@ -109,21 +108,14 @@ def _rpc_sync(name: str, payload: dict):
         raise BetError(f"{name}: HTTP {res.status_code} {res.text[:300]}")
     return res.json() if res.text else None
 
-
 async def rpc(name: str, payload: dict):
     return await asyncio.to_thread(_rpc_sync, name, payload)
 
-
-# ---------------------------------------------------------------
-# 🧮 배율 계산 / 표시 헬퍼
-# ---------------------------------------------------------------
 def compute_multipliers(team_a: list, team_b: list):
-    """양 팀 모두 적중 시 배팅액의 3배를 지급합니다."""
     return WIN_MULTIPLIER, WIN_MULTIPLIER
 
-
 # ---------------------------------------------------------------
-# 🖥️ /배팅 UI
+# 🖥️ /배팅 및 /사탕뽑기 UI 컴포넌트
 # ---------------------------------------------------------------
 class BetAmountModal(discord.ui.Modal):
     def __init__(self, user_id: int, market_id: int, side: str):
@@ -175,10 +167,6 @@ class BetAmountModal(discord.ui.Modal):
             print(f"❌ [BetAmountModal 에러] {e}", flush=True)
             await interaction.followup.send("❌ 베팅 처리 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.", ephemeral=True)
 
-    async def on_error(self, interaction: discord.Interaction, error: Exception):
-        print(f"❌ [BetAmountModal on_error] {error}", flush=True)
-
-
 class BetPanelView(discord.ui.View):
     def __init__(self, user_id: int, market: dict):
         super().__init__(timeout=300)
@@ -227,7 +215,6 @@ class BetPanelView(discord.ui.View):
             print(f"❌ [BetPanelView.back 에러] {e}", flush=True)
             await interaction.followup.send("❌ 목록을 불러오지 못했어요.", ephemeral=True)
 
-
 class MarketSelectView(discord.ui.View):
     def __init__(self, user_id: int, markets: list):
         super().__init__(timeout=300)
@@ -248,3 +235,11 @@ class MarketSelectView(discord.ui.View):
         self.select.callback = self.on_select
         self.add_item(self.select)
 
+    async def on_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            market_id = int(self.select.values[0])
+            market = await rpc("bet_get_market", {"p_market_id": market_id, "p_discord_id": str(interaction.user.id)})
+            await interaction.edit_original_response(
+                content=None,
+                embed=build_market_embed(market),
