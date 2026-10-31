@@ -217,7 +217,7 @@ class MarketSelect(discord.ui.Select):
                 description="이 경기에 베팅하려면 선택하세요.",
                 emoji="🎮"
             ))
-        super().__init__(placeholder="베팅할 경기를 골라주세요...", min_values=1, max_values=10, options=options)
+        super().__init__(placeholder="베팅할 경기를 골라주세요...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
