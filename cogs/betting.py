@@ -4,7 +4,7 @@
 import asyncio
 import os
 import re
-from typing import Optional
+from typing import Optional, List
 
 import discord
 import requests
@@ -20,7 +20,7 @@ load_dotenv()
 # ---------------------------------------------------------------
 SUPABASE_URL = os.getenv(
     "SUPABASE_URL",
-    "https://tdatedpggtutuqrywguk.supabase.co",
+    "https://supabase.co",
 )
 
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
@@ -203,3 +203,45 @@ class BetPanelView(discord.ui.View):
         except Exception as e:
             print(f"❌ [BetPanelView.back 에러] {e}", flush=True)
             await interaction.followup.send("❌ 경기 목록을 불러오는 중 오류가 발생했습니다.", ephemeral=True)
+
+class MarketSelect(discord.ui.Select):
+    def __init__(self, user_id: int, markets: List[dict]):
+        self.user_id = user_id
+        options = []
+        for m in markets:
+            game_name = m.get("game", "내전")
+            market_id = m.get("id")
+            options.append(discord.SelectOption(
+                label=f"{game_name} #{market_id}",
+                value=str(market_id),
+                description="이 경기에 베팅하려면 선택하세요.",
+                emoji="🎮"
+            ))
+        super().__init__(placeholder="베팅할 경기를 골라주세요...", min_values=1, max_values=10, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            market_id = int(self.values[0])
+            market = await rpc("bet_get_market", {"p_market_id": market_id, "p_discord_id": str(interaction.user.id)})
+            await interaction.edit_original_response(
+                content=None,
+                embed=build_market_embed(market),
+                view=BetPanelView(self.user_id, market)
+            )
+        except Exception as e:
+            print(f"❌ [MarketSelect 에러] {e}", flush=True)
+            await interaction.followup.send("❌ 경기를 불러오는 중에 오류가 발생했습니다.", ephemeral=True)
+
+class MarketSelectView(discord.ui.View):
+    def __init__(self, user_id: int, markets: List[dict]):
+        super().__init__(timeout=180)
+        self.add_item(MarketSelect(user_id, markets))
+
+# ---------------------------------------------------------------
+# 🔌 Cog 및 슬래시 명령어 등록
+# ---------------------------------------------------------------
+class BettingCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
