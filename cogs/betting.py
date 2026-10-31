@@ -4,19 +4,10 @@
 필수 환경변수:
   SUPABASE_URL
   SUPABASE_SERVICE_KEY
-
-필수 Supabase RPC:
-  bet_list_open_markets(p_guild_id text)
-  bet_get_market(p_market_id bigint, p_discord_id text)
-  bet_place(
-      p_market_id bigint, p_discord_id text, p_side text,
-      p_amount bigint, p_min bigint, p_max bigint
-  )
 """
 import asyncio
 import os
-import re
-from typing import Any
+from typing import Any, Optional
 
 import discord
 import requests
@@ -82,7 +73,10 @@ def explain_bet_failure(result: dict[str, Any]) -> str:
 
 def build_market_embed(market: dict[str, Any]) -> discord.Embed:
     market_id = market.get("id", "?")
-    game_name = market.get("game") or "내전"
+    game_name = market.get("game") or market.get("title") or "내전"
+    mult_a = market.get("mult_a", 1.0)
+    mult_b = market.get("mult_b", 1.0)
+    
     embed = discord.Embed(
         title=f"🎰 {game_name} #{market_id} 베팅",
         color=discord.Color.blurple(),
@@ -92,15 +86,16 @@ def build_market_embed(market: dict[str, Any]) -> discord.Embed:
     team_b = market.get("team_b") or []
     
     embed.add_field(
-        name="🅰️ A팀", 
+        name=f"🅰️ A팀 (배당: x{mult_a})", 
         value="\n".join(team_a) if team_a else "선수 없음", 
         inline=True
     )
     embed.add_field(
-        name="🅱️ B팀", 
+        name=f"🅱️ B팀 (배당: x{mult_b})", 
         value="\n".join(team_b) if team_b else "선수 없음", 
         inline=True
     )
+    embed.set_footer(text=f"마감 시간: {market.get('closes_at', '미정')}")
     return embed
 
 
@@ -108,7 +103,7 @@ class Betting(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # 1. /배팅 (열린 베팅 판 조회 및 베팅 진행)
+    # 1. /배팅
     @app_commands.command(name="배팅", description="현재 열린 내전 경기에 베팅을 진행합니다.")
     @app_commands.describe(
         market_id="베팅할 경기 ID",
@@ -145,19 +140,20 @@ class Betting(commands.Cog):
                 await interaction.followup.send(err_msg, ephemeral=True)
             else:
                 await interaction.followup.send(
-                    f"✅ **{market_id}번 경기** {side_upper}팀에 **{amount:,} 칩** 베팅이 완료되었습니다!", 
+                    f"✅ **#{market_id} 경기** {side_upper}팀에 **{amount:,} 칩** 베팅 완료!", 
                     ephemeral=True
                 )
         except Exception as e:
             await interaction.followup.send(f"❌ 베팅 처리 중 오류가 발생했습니다: {e}", ephemeral=True)
 
-    # 2. /칩 (보유 칩 잔액 확인)
+    # 2. /칩
     @app_commands.command(name="칩", description="현재 보유 중인 칩 잔액을 조회합니다.")
     async def chip_command(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
-            # DBManager를 통한 칩 조회 (main.py의 bot.db 활용)
-            chips = await self.bot.db.get_user_chips(interaction.user.id)
+            res = await rpc("get_user_chips", {"p_discord_id": str(interaction.user.id)})
+            chips = int(res) if res is not None else 0
+
             await interaction.followup.send(
                 f"🪙 {interaction.user.mention} 님의 현재 보유 칩: **{chips:,}개**", 
                 ephemeral=True
@@ -165,28 +161,28 @@ class Betting(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ 칩 조회 중 오류가 발생했습니다: {e}", ephemeral=True)
 
-    # 3. /배팅시작 (새로운 베팅 판 생성 - 관리자/호스트용)
-    @app_commands.command(name="배팅시작", description="현재 진행 중인 내전의 베팅 판을 개설합니다.")
+    # 3. /배팅시작
+    @app_commands.command(name="배팅시작", description="현재 열려 있는 내전 베팅 판을 조회/안내합니다.")
     async def start_bet_command(self, interaction: discord.Interaction):
         await interaction.response.defer()
         try:
             guild_id = str(interaction.guild_id) if interaction.guild_id else ""
             markets = await rpc("bet_list_open_markets", {"p_guild_id": guild_id})
             
-            if not markets:
-                await interaction.followup.send("⚠️ 현재 개설 가능한 내전 경기가 없습니다.")
+            if not markets or not isinstance(markets, list) or len(markets) == 0:
+                await interaction.followup.send("⚠️ 현재 개설된 내전 베팅 판이 없습니다.")
                 return
 
             latest_market = markets[0]
             embed = build_market_embed(latest_market)
             await interaction.followup.send(
-                content="🎰 **새로운 내전 베팅이 개설되었습니다!** `/배팅` 커맨드로 참여해 주세요.", 
+                content="🎰 **현재 진행 중인 내전 베팅 판입니다!** `/배팅` 커맨드로 참여해 주세요.", 
                 embed=embed
             )
         except Exception as e:
-            await interaction.followup.send(f"❌ 베팅 시작 처리 중 오류가 발생했습니다: {e}")
+            await interaction.followup.send(f"❌ 베팅 조회 중 오류가 발생했습니다: {e}")
 
-    # 4. /출금요청 (칩 출금 요청)
+    # 4. /출금요청
     @app_commands.command(name="출금요청", description="보유한 칩 출금을 요청합니다.")
     @app_commands.describe(amount="출금 요청할 칩 수량")
     async def withdraw_command(self, interaction: discord.Interaction, amount: int):
@@ -196,17 +192,21 @@ class Betting(commands.Cog):
             return
 
         try:
-            user_chips = await self.bot.db.get_user_chips(interaction.user.id)
-            if user_chips < amount:
-                await interaction.followup.send("❌ 보유한 칩보다 많은 금액은 출금할 수 없습니다.", ephemeral=True)
-                return
+            res = await rpc("request_withdrawal", {
+                "p_discord_id": str(interaction.user.id),
+                "p_amount": amount
+            })
 
-            # DBManager의 출금 요청 처리 함수 호출
-            await self.bot.db.request_withdrawal(interaction.user.id, amount)
-            await interaction.followup.send(
-                f"💸 **{amount:,} 칩** 출금 요청이 정상적으로 접수되었습니다. 관리자 승인을 기다려주세요.", 
-                ephemeral=True
-            )
+            if isinstance(res, dict) and not res.get("success", False):
+                err_msg = explain_bet_failure(res)
+                await interaction.followup.send(err_msg, ephemeral=True)
+            else:
+                withdrawal_id = res.get("withdrawal_id", "?")
+                new_balance = res.get("balance_after", 0) if isinstance(res, dict) else 0
+                await interaction.followup.send(
+                    f"💸 **{amount:,} 칩** 출금 요청 접수 완료! (신청 ID: `#{withdrawal_id}`, 남은 칩: **{new_balance:,}개**)", 
+                    ephemeral=True
+                )
         except Exception as e:
             await interaction.followup.send(f"❌ 출금 요청 처리 중 오류가 발생했습니다: {e}", ephemeral=True)
 
