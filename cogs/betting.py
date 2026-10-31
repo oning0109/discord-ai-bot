@@ -94,3 +94,13 @@ def build_market_embed(market: dict[str, Any]) -> discord.Embed:
 
     team_a = market.get("team_a") or []
     team_b = market.get("team_b") or []
+
+class Betting(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    # 필요시 커맨드 및 이벤트 추가
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Betting(bot))
