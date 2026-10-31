@@ -12,10 +12,6 @@
       p_market_id bigint, p_discord_id text, p_side text,
       p_amount bigint, p_min bigint, p_max bigint
   )
-
-이 파일은 관전자 베팅 UI와 /배팅 명령어를 제공합니다.
-경기 생성/결과 정산/칩 역할 충전/출금은 해당 DB RPC 및 custom_game.py
-연동 규격이 확인되어야 안전하게 추가할 수 있습니다.
 """
 import asyncio
 import os
@@ -94,34 +90,126 @@ def build_market_embed(market: dict[str, Any]) -> discord.Embed:
 
     team_a = market.get("team_a") or []
     team_b = market.get("team_b") or []
+    
+    embed.add_field(
+        name="🅰️ A팀", 
+        value="\n".join(team_a) if team_a else "선수 없음", 
+        inline=True
+    )
+    embed.add_field(
+        name="🅱️ B팀", 
+        value="\n".join(team_b) if team_b else "선수 없음", 
+        inline=True
+    )
+    return embed
 
-# cogs/betting.py 하단 부분
 
 class Betting(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # 1. /배팅 명령어
-    @app_commands.command(name="배팅", description="현재 열린 내전 경기에 베팅합니다.")
-    async def bet_command(self, interaction: discord.Interaction):
-        await interaction.response.send_message("🎰 베팅 목록을 조회합니다...", ephemeral=True)
+    # 1. /배팅 (열린 베팅 판 조회 및 베팅 진행)
+    @app_commands.command(name="배팅", description="현재 열린 내전 경기에 베팅을 진행합니다.")
+    @app_commands.describe(
+        market_id="베팅할 경기 ID",
+        side="베팅할 팀 (A 또는 B)",
+        amount="베팅할 칩 금액"
+    )
+    async def bet_command(
+        self, 
+        interaction: discord.Interaction, 
+        market_id: int, 
+        side: str, 
+        amount: int
+    ):
+        await interaction.response.defer(ephemeral=True)
+        
+        side_upper = side.upper()
+        if side_upper not in ["A", "B"]:
+            await interaction.followup.send("❌ 베팅 팀은 'A' 또는 'B'로 입력해 주세요.", ephemeral=True)
+            return
 
-    # 2. /칩 명령어 (잔액 조회 등)
-    @app_commands.command(name="칩", description="보유한 칩 잔액을 확인합니다.")
+        try:
+            payload = {
+                "p_market_id": market_id,
+                "p_discord_id": str(interaction.user.id),
+                "p_side": side_upper,
+                "p_amount": amount,
+                "p_min": MIN_BET,
+                "p_max": MAX_BET
+            }
+            res = await rpc("bet_place", payload)
+            
+            if isinstance(res, dict) and not res.get("success", False):
+                err_msg = explain_bet_failure(res)
+                await interaction.followup.send(err_msg, ephemeral=True)
+            else:
+                await interaction.followup.send(
+                    f"✅ **{market_id}번 경기** {side_upper}팀에 **{amount:,} 칩** 베팅이 완료되었습니다!", 
+                    ephemeral=True
+                )
+        except Exception as e:
+            await interaction.followup.send(f"❌ 베팅 처리 중 오류가 발생했습니다: {e}", ephemeral=True)
+
+    # 2. /칩 (보유 칩 잔액 확인)
+    @app_commands.command(name="칩", description="현재 보유 중인 칩 잔액을 조회합니다.")
     async def chip_command(self, interaction: discord.Interaction):
-        await interaction.response.send_message("🪙 보유 칩 잔액 조회 기능입니다.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        try:
+            # DBManager를 통한 칩 조회 (main.py의 bot.db 활용)
+            chips = await self.bot.db.get_user_chips(interaction.user.id)
+            await interaction.followup.send(
+                f"🪙 {interaction.user.mention} 님의 현재 보유 칩: **{chips:,}개**", 
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ 칩 조회 중 오류가 발생했습니다: {e}", ephemeral=True)
 
-    # 3. /배팅시작 명령어 (관리자/호스트용)
-    @app_commands.command(name="배팅시작", description="새로운 내전 베팅 판을 생성합니다.")
+    # 3. /배팅시작 (새로운 베팅 판 생성 - 관리자/호스트용)
+    @app_commands.command(name="배팅시작", description="현재 진행 중인 내전의 베팅 판을 개설합니다.")
     async def start_bet_command(self, interaction: discord.Interaction):
-        await interaction.response.send_message("🎰 새로운 베팅이 시작되었습니다.", ephemeral=False)
+        await interaction.response.defer()
+        try:
+            guild_id = str(interaction.guild_id) if interaction.guild_id else ""
+            markets = await rpc("bet_list_open_markets", {"p_guild_id": guild_id})
+            
+            if not markets:
+                await interaction.followup.send("⚠️ 현재 개설 가능한 내전 경기가 없습니다.")
+                return
 
-    # 4. /출금요청 명령어
+            latest_market = markets[0]
+            embed = build_market_embed(latest_market)
+            await interaction.followup.send(
+                content="🎰 **새로운 내전 베팅이 개설되었습니다!** `/배팅` 커맨드로 참여해 주세요.", 
+                embed=embed
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ 베팅 시작 처리 중 오류가 발생했습니다: {e}")
+
+    # 4. /출금요청 (칩 출금 요청)
     @app_commands.command(name="출금요청", description="보유한 칩 출금을 요청합니다.")
+    @app_commands.describe(amount="출금 요청할 칩 수량")
     async def withdraw_command(self, interaction: discord.Interaction, amount: int):
-        await interaction.response.send_message(f"💸 {amount} 칩 출금 요청이 접수되었습니다.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        if amount <= 0:
+            await interaction.followup.send("❌ 1개 이상의 칩을 입력해 주세요.", ephemeral=True)
+            return
+
+        try:
+            user_chips = await self.bot.db.get_user_chips(interaction.user.id)
+            if user_chips < amount:
+                await interaction.followup.send("❌ 보유한 칩보다 많은 금액은 출금할 수 없습니다.", ephemeral=True)
+                return
+
+            # DBManager의 출금 요청 처리 함수 호출
+            await self.bot.db.request_withdrawal(interaction.user.id, amount)
+            await interaction.followup.send(
+                f"💸 **{amount:,} 칩** 출금 요청이 정상적으로 접수되었습니다. 관리자 승인을 기다려주세요.", 
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ 출금 요청 처리 중 오류가 발생했습니다: {e}", ephemeral=True)
 
 
-# discord.py가 Extension을 로드할 때 호출하는 필수 함수
 async def setup(bot: commands.Bot):
     await bot.add_cog(Betting(bot))
