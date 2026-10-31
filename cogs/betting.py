@@ -183,6 +183,7 @@ class Betting(commands.Cog):
             await interaction.followup.send(f"❌ 베팅 조회 중 오류가 발생했습니다: {e}")
 
     # 4. /출금요청
+    # 4. /출금요청
     @app_commands.command(name="출금요청", description="보유한 칩 출금을 요청합니다.")
     @app_commands.describe(amount="출금 요청할 칩 수량")
     async def withdraw_command(self, interaction: discord.Interaction, amount: int):
@@ -203,10 +204,35 @@ class Betting(commands.Cog):
             else:
                 withdrawal_id = res.get("withdrawal_id", "?")
                 new_balance = res.get("balance_after", 0) if isinstance(res, dict) else 0
+
+                # 1) 신청 유저에게 완료 메시지 전송
                 await interaction.followup.send(
                     f"💸 **{amount:,} 칩** 출금 요청 접수 완료! (신청 ID: `#{withdrawal_id}`, 남은 칩: **{new_balance:,}개**)", 
                     ephemeral=True
                 )
+
+                # 2) 관리자 채널로 출금 요청 알림 전송
+                if ADMIN_CHANNEL_ID:
+                    admin_channel = self.bot.get_channel(ADMIN_CHANNEL_ID)
+                    if admin_channel is None:
+                        try:
+                            admin_channel = await self.bot.fetch_channel(ADMIN_CHANNEL_ID)
+                        except Exception:
+                            admin_channel = None
+
+                    if admin_channel:
+                        embed = discord.Embed(
+                            title="🚨 [출금 요청] 새로운 신청이 접수되었습니다!",
+                            color=discord.Color.gold()
+                        )
+                        embed.add_field(name="신청 ID", value=f"`#{withdrawal_id}`", inline=True)
+                        embed.add_field(name="신청자", value=f"{interaction.user.mention} ({interaction.user.name})", inline=True)
+                        embed.add_field(name="신청 금액", value=f"**{amount:,} 칩**", inline=False)
+                        embed.add_field(name="신청 후 잔액", value=f"{new_balance:,} 칩", inline=True)
+                        embed.set_footer(text=f"Discord ID: {interaction.user.id}")
+
+                        await admin_channel.send(embed=embed)
+
         except Exception as e:
             await interaction.followup.send(f"❌ 출금 요청 처리 중 오류가 발생했습니다: {e}", ephemeral=True)
 
