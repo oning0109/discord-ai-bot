@@ -95,12 +95,33 @@ def build_market_embed(market: dict[str, Any]) -> discord.Embed:
     team_a = market.get("team_a") or []
     team_b = market.get("team_b") or []
 
+# cogs/betting.py 하단 부분
+
 class Betting(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # 필요시 커맨드 및 이벤트 추가
+    # 1. /배팅 명령어
+    @app_commands.command(name="배팅", description="현재 열린 내전 경기에 베팅합니다.")
+    async def bet_command(self, interaction: discord.Interaction):
+        await interaction.response.send_message("🎰 베팅 목록을 조회합니다...", ephemeral=True)
+
+    # 2. /칩 명령어 (잔액 조회 등)
+    @app_commands.command(name="칩", description="보유한 칩 잔액을 확인합니다.")
+    async def chip_command(self, interaction: discord.Interaction):
+        await interaction.response.send_message("🪙 보유 칩 잔액 조회 기능입니다.", ephemeral=True)
+
+    # 3. /배팅시작 명령어 (관리자/호스트용)
+    @app_commands.command(name="배팅시작", description="새로운 내전 베팅 판을 생성합니다.")
+    async def start_bet_command(self, interaction: discord.Interaction):
+        await interaction.response.send_message("🎰 새로운 베팅이 시작되었습니다.", ephemeral=False)
+
+    # 4. /출금요청 명령어
+    @app_commands.command(name="출금요청", description="보유한 칩 출금을 요청합니다.")
+    async def withdraw_command(self, interaction: discord.Interaction, amount: int):
+        await interaction.response.send_message(f"💸 {amount} 칩 출금 요청이 접수되었습니다.", ephemeral=True)
 
 
+# discord.py가 Extension을 로드할 때 호출하는 필수 함수
 async def setup(bot: commands.Bot):
     await bot.add_cog(Betting(bot))
