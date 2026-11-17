@@ -5,7 +5,18 @@ import config
 from db_manager import DBManager  # 1. DBManager 클래스 임포트
 
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=config.DEFAULT_PREFIX, intents=intents)
+
+# 📌 소유자로 지정할 유저들의 디스코드 숫자 ID를 입력하세요 (기존 소유자 본인 ID 포함 필수)
+OWNER_IDS = {
+    123456789012345678,  # 기존 소유자 ID
+    987654321098765432,  # 추가할 소유자 ID
+}
+
+bot = commands.Bot(
+    command_prefix=config.DEFAULT_PREFIX,
+    intents=intents,
+    owner_ids=OWNER_IDS,
+)
 
 # 2. bot 객체에 DBManager 인스턴스를 미리 연결 (cogs 로드 전 필수)
 bot.db = DBManager()
