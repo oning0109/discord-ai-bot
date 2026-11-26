@@ -76,3 +76,13 @@ LOBBY_EXPIRE_HOURS = 48     # 이 시간이 지난 대기실/결과 화면은 �
 # ── 오버워치 인게임 랭크 (OverFast API) ───────────────
 OVERFAST_URL = os.getenv("OVERFAST_URL", "https://overfast-api.tekrop.fr").rstrip("/")
 OW_RANK_REFRESH_HOUR = 5    # 매일 이 시각(KST)에 연동된 배틀태그 랭크 갱신
+
+
+# ── 삭발봇 대화 (OpenAI 호환: Groq / OpenAI) ──────────
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()   # 비우면 대화 기능만 꺼짐
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")      # 모델 이름
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+ASK_REASONING_EFFORT = os.getenv("ASK_REASONING_EFFORT", "").strip()
+ASK_DAILY_LIMIT = _int_env("ASK_DAILY_LIMIT", 20)           # 1인 하루 질문 수 (소유자는 무제한)
+ASK_COOLDOWN = 5                                            # 연속 질문 간격(초)
+ASK_MAX_TOKENS = 600                                        # 답변 최대 길이
