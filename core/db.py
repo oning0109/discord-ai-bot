@@ -189,26 +189,6 @@ class DB:
         return len(await self.delete("bot_lobbies", updated_at=f"lt.{cut}"))
 
     # ── 일정 ──────────────────────────────────────────
-    async def upsert_schedule(self, payload: dict) -> int:
-        """스레드 ID 기준 1행 유지. 반환: 정리된 중복 행 수"""
-        tid = payload["discord_thread_id"]
-        rows = await self.select("schedules", select="id", discord_thread_id=f"eq.{tid}", order="id.asc")
-        if rows:
-            keep = rows[0]["id"]
-            await self.update("schedules", payload, id=f"eq.{keep}")
-            if len(rows) > 1:
-                await self.delete("schedules", discord_thread_id=f"eq.{tid}", id=f"neq.{keep}")
-            return len(rows) - 1
-        await self.insert("schedules", payload)
-        return 0
-
-    async def delete_schedule(self, thread_id: int, titles: Iterable[str]) -> int:
-        n = len(await self.delete("schedules", discord_thread_id=f"eq.{thread_id}"))
-        for t in set(titles):  # 예전 방식(스레드 ID 없이 저장된 행)은 제목으로 보조 삭제
-            n += len(await self.delete("schedules", discord_thread_id="is.null", title=f"eq.{t}"))
-        return n
-
-
 def team_of(member, role_team_map: dict) -> str | None:
     for role in getattr(member, "roles", []):
         if role.id in role_team_map:
