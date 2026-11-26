@@ -1,7 +1,2 @@
-discord.py
-matplotlib
-numpy
-python-dateutil
-supabase
-requests
-Pillow
+discord.py>=2.4
+python-dotenv
