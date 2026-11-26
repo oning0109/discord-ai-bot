@@ -16,7 +16,6 @@ COGS = (
     "cogs.profile",   # 등록/수정/조회/옵치연동/소유자 명령어
     "cogs.lobby",     # 내전 모집·팀 편성·결과
     "cogs.history",   # 전적/되돌리기
-    "cogs.schedule",  # 포럼 일정 → 사이트 캘린더
     "cogs.map_picker",
     "cogs.hero_picker",
 )
