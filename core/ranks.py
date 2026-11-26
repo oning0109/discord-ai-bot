@@ -29,11 +29,9 @@ OW_PREF_NAME = {"main": "주", "sub": "부", "no": "안 함"}
 
 # 옵치 점수 ↔ 티어 (옛 경쟁전 점수 기준: 등급 시작점 + 디비전당 100점)
 OW_RANKS = [
-    OW_RANKS = [
     ("bronze", "브론즈", 500), ("silver", "실버", 1000), ("gold", "골드", 1500),
     ("platinum", "플래티넘", 2000), ("emerald", "에메랄드", 2500), ("diamond", "다이아", 3000),
     ("master", "마스터", 3500), ("grandmaster", "그랜드마스터", 4000), ("champion", "챔피언", 4500),
-]
 ]
 OW_RANK_KO = {k: ko for k, ko, _ in OW_RANKS}
 OW_RANK_BASE = {k: base for k, _, base in OW_RANKS}
