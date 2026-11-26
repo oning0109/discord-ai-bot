@@ -18,6 +18,7 @@ COGS = (
     "cogs.history",   # 전적/되돌리기
     "cogs.map_picker",
     "cogs.hero_picker",
+    "cogs.ask"       # 삭발봇 대화 (OpenAI)
 )
 
 
