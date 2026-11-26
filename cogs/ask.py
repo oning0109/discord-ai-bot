@@ -110,8 +110,10 @@ class Ask(commands.Cog):
 
     # ── OpenAI 호출 ───────────────────────────────────
     async def chat(self, messages: list) -> dict:
+        # 답변 길이 옵션 이름이 서비스마다 다름 (OpenAI: max_completion_tokens / Mistral·Groq 등: max_tokens)
+        token_key = "max_completion_tokens" if "api.openai.com" in config.OPENAI_BASE_URL else "max_tokens"
         body = {"model": config.OPENAI_MODEL, "messages": messages, "tools": TOOLS,
-                "max_completion_tokens": config.ASK_MAX_TOKENS}
+                token_key: config.ASK_MAX_TOKENS}
         if config.ASK_REASONING_EFFORT:
             body["reasoning_effort"] = config.ASK_REASONING_EFFORT
         async with self.session.post(
@@ -138,7 +140,7 @@ class Ask(commands.Cog):
                 self.history[user.id] = (past + [{"role": "user", "content": question[:500]},
                                                  {"role": "assistant", "content": text}])[-6:]
                 return text[:1500]
-            messages.append(msg)
+            messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
             for c in calls:
                 try:
                     args = json.loads(c["function"].get("arguments") or "{}")
